@@ -27,7 +27,14 @@ def query(sql: str, params: tuple = ()) -> pd.DataFrame:
     with get_conn() as conn:
         cur = conn.execute(sql, params)
         cols = [d.name for d in cur.description]
-        return pd.DataFrame(cur.fetchall(), columns=cols)
+        df = pd.DataFrame(cur.fetchall(), columns=cols)
+    for col in ('ts', 'run_at', 'created_at'):
+        if col in df:
+            df[col] = pd.to_datetime(df[col], utc=True).dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
+    for col in ('aqi', 'pm2_5', 'pm10', 'pm2_5_24h', 'pm10_24h'):
+        if col in df:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
 
 
 st.title("🌫️ India Air Quality")
@@ -43,7 +50,7 @@ if latest.empty:
     st.stop()
 
 latest = latest.sort_values("aqi", ascending=False)
-updated = pd.to_datetime(latest["ts"].max()).tz_convert("Asia/Kolkata")
+updated = pd.to_datetime(latest["ts"].max())
 st.write(f"Last updated: **{updated:%d %b %Y, %H:%M} IST**")
 
 # --- Headline numbers -------------------------------------------------------
@@ -99,7 +106,10 @@ a, q = st.columns(2)
 with a:
     st.subheader("Recent alerts")
     alerts = query("SELECT created_at, city, alert_type, message FROM aq.alerts ORDER BY created_at DESC LIMIT 20")
-    st.dataframe(alerts, hide_index=True, width="stretch") if not alerts.empty else st.info("No alerts yet.")
+    if alerts.empty:
+        st.info("No alerts yet.")
+    else:
+        st.dataframe(alerts, hide_index=True, width="stretch")
 with q:
     st.subheader("Latest data quality checks")
     dq = query("""

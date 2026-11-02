@@ -5,6 +5,8 @@
 ![CI](https://github.com/Lokesh4561/india-air-quality-pipeline/actions/workflows/ci.yml/badge.svg)
 ![Pipeline](https://github.com/Lokesh4561/india-air-quality-pipeline/actions/workflows/pipeline.yml/badge.svg)
 
+![Dashboard](docs/dashboard.png)
+
 ## Architecture
 
 ```
