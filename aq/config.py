@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip().strip("\"'")  # ignore stray spaces, line breaks, quotes
 API_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 POLLUTANTS = ["pm2_5", "pm10", "nitrogen_dioxide", "ozone", "sulphur_dioxide", "carbon_monoxide"]
 IST = ZoneInfo("Asia/Kolkata")

@@ -47,3 +47,30 @@ def test_rolling_aqi_needs_16_hours_then_uses_24h_average():
     assert len(rows) == 30 - 15            # first AQI appears at the 16th hour
     city, ts, pm25, pm10, aqi, cat, dominant = rows[0]
     assert (city, pm25, aqi, cat, dominant) == ("Pune", 45.0, 75, "Satisfactory", "pm2_5")
+
+
+def test_fetch_all_batches_every_city_in_one_request(monkeypatch):
+    import aq.ingest as ingest
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [SAMPLE_PAYLOAD, SAMPLE_PAYLOAD]
+
+    def fake_get(url, params, headers, timeout):
+        calls.append(params)
+        return FakeResponse()
+
+    monkeypatch.setattr(ingest.requests, "get", fake_get)
+    cities = [("A", 1.5, 2.5), ("B", 3.5, 4.5)]
+    params, payloads = ingest.fetch_all(cities, past_days=1, forecast_days=2)
+
+    assert len(calls) == 1
+    assert params["latitude"] == "1.5,3.5" and params["longitude"] == "2.5,4.5"
+    assert len(payloads) == 2

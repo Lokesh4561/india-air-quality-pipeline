@@ -1,7 +1,8 @@
-"""Ingestion: fetch hourly air quality for each city -> bronze (raw JSON) -> silver (readings, forecasts).
+"""Ingestion: fetch hourly air quality for all cities -> bronze (raw JSON) -> silver (readings, forecasts).
 
-Idempotent: readings are upserted on (city, ts) and forecasts on (city, ts, issued_date),
-so re-running the same hour never creates duplicates.
+All cities are fetched in ONE batched API request (the API accepts comma-separated
+coordinates), which is faster and avoids rate limits on shared CI runners.
+Idempotent: readings are upserted on (city, ts) and forecasts on (city, ts, issued_date).
 """
 
 import time
@@ -33,11 +34,11 @@ ON CONFLICT (city, ts, issued_date) DO UPDATE SET
 """
 
 
-def fetch_city(lat: float, lon: float, past_days: int, forecast_days: int, retries: int = 3) -> tuple[dict, dict]:
-    """Call the Open-Meteo Air Quality API, retrying with backoff on network errors or HTTP 429/5xx."""
+def fetch_all(cities, past_days: int, forecast_days: int, retries: int = 4) -> tuple[dict, list[dict]]:
+    """Fetch every city in one request; retry with exponential backoff on network errors, 429 or 5xx."""
     params = {
-        "latitude": lat,
-        "longitude": lon,
+        "latitude": ",".join(str(lat) for _, lat, _ in cities),
+        "longitude": ",".join(str(lon) for _, _, lon in cities),
         "hourly": ",".join(POLLUTANTS),
         "timezone": "Asia/Kolkata",
         "past_days": past_days,
@@ -45,15 +46,21 @@ def fetch_city(lat: float, lon: float, past_days: int, forecast_days: int, retri
     }
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(API_URL, params=params, headers=HEADERS, timeout=30)
+            resp = requests.get(API_URL, params=params, headers=HEADERS, timeout=60)
             if resp.status_code == 429 or resp.status_code >= 500:
                 raise requests.HTTPError(f"HTTP {resp.status_code}", response=resp)
             resp.raise_for_status()
-            return params, resp.json()
+            data = resp.json()
+            payloads = data if isinstance(data, list) else [data]  # one location returns an object, many a list
+            if len(payloads) != len(cities):
+                raise ValueError(f"expected {len(cities)} locations, got {len(payloads)}")
+            return params, payloads
         except (requests.ConnectionError, requests.Timeout, requests.HTTPError):
             if attempt == retries:
                 raise
-            time.sleep(2 ** attempt)
+            wait = 5 * 2 ** (attempt - 1)
+            print(f"  API request failed (attempt {attempt}/{retries}), retrying in {wait}s...")
+            time.sleep(wait)
     raise RuntimeError("unreachable")
 
 
@@ -86,19 +93,20 @@ def run(conn, past_days: int = 1, forecast_days: int = 2) -> dict:
     now = datetime.now(IST)
     totals = {"cities": 0, "failed": 0, "readings": 0, "forecasts": 0}
 
-    for city, lat, lon in CITIES:
-        try:
-            params, payload = fetch_city(lat, lon, past_days, forecast_days)
-        except Exception as exc:
-            totals["failed"] += 1
-            print(f"  failed   {city}: {exc}")
-            continue
+    try:
+        params, payloads = fetch_all(CITIES, past_days, forecast_days)
+    except Exception as exc:
+        totals["failed"] = len(CITIES)
+        print(f"  failed   all cities: {exc}")
+        return totals
 
+    for (city, lat, lon), payload in zip(CITIES, payloads):
         observed, forecast = parse_hourly(city, payload, now)
+        city_params = {**params, "latitude": lat, "longitude": lon, "batched": True}
         with conn.transaction():
             conn.execute(
                 "INSERT INTO aq.raw_responses (city, params, payload) VALUES (%s, %s, %s)",
-                (city, Jsonb(params), Jsonb(payload)),
+                (city, Jsonb(city_params), Jsonb(payload)),
             )
             with conn.cursor() as cur:
                 if observed:
@@ -110,6 +118,5 @@ def run(conn, past_days: int = 1, forecast_days: int = 2) -> dict:
         totals["readings"] += len(observed)
         totals["forecasts"] += len(forecast)
         print(f"  ok       {city:<14} {len(observed):>5} readings  {len(forecast):>4} forecasts")
-        time.sleep(0.2)  # be polite to the free API
 
     return totals

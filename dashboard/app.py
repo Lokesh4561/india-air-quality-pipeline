@@ -28,12 +28,13 @@ def query(sql: str, params: tuple = ()) -> pd.DataFrame:
         cur = conn.execute(sql, params)
         cols = [d.name for d in cur.description]
         df = pd.DataFrame(cur.fetchall(), columns=cols)
-    for col in ('ts', 'run_at', 'created_at'):
+    # Charts work best with plain (timezone-naive) local times and float numbers.
+    for col in ("ts", "run_at", "created_at"):
         if col in df:
-            df[col] = pd.to_datetime(df[col], utc=True).dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
-    for col in ('aqi', 'pm2_5', 'pm10', 'pm2_5_24h', 'pm10_24h'):
+            df[col] = pd.to_datetime(df[col], utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+    for col in ("aqi", "pm2_5", "pm10", "pm2_5_24h", "pm10_24h"):
         if col in df:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
 
@@ -50,7 +51,7 @@ if latest.empty:
     st.stop()
 
 latest = latest.sort_values("aqi", ascending=False)
-updated = pd.to_datetime(latest["ts"].max())
+updated = pd.to_datetime(latest["ts"].max())  # already converted to IST in query()
 st.write(f"Last updated: **{updated:%d %b %Y, %H:%M} IST**")
 
 # --- Headline numbers -------------------------------------------------------
