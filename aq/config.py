@@ -17,3 +17,11 @@ FRESHNESS_HOURS = 3        # newest reading per city must be at most this old
 MIN_ROWS_PER_DAY = 20      # expected hourly rows per city in the last 24h
 MAX_VALID_CONCENTRATION = 2000.0
 MAX_NULL_RATE = 0.10
+
+if not DATABASE_URL:  # Streamlit Community Cloud: fall back to st.secrets
+    try:
+        import streamlit as st
+
+        DATABASE_URL = str(st.secrets.get("DATABASE_URL", "")).strip().strip("\"'")
+    except Exception:
+        pass
