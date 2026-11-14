@@ -4,9 +4,11 @@ All tables live in their own `aq` schema, so this project can share a database
 (for example your Neon database) with other projects without clashing.
 """
 
+import socket
 import time
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 
 from aq.config import DATABASE_URL
 
@@ -83,6 +85,23 @@ CREATE TABLE IF NOT EXISTS aq.dq_results (
 """
 
 
+def _ipv4_hostaddr(url: str) -> dict:
+    """Pin the connection to an IPv4 address.
+
+    GitHub-hosted runners have no IPv6 route, but Neon hostnames also resolve to IPv6,
+    which fails with "Network is unreachable". The hostname is still sent for TLS/SNI,
+    which Neon needs to find your database. Falls back to normal behaviour on any problem.
+    """
+    try:
+        host = conninfo_to_dict(url).get("host")
+        if not host or host.startswith("/") or "," in host:
+            return {}
+        infos = socket.getaddrinfo(host, 5432, socket.AF_INET, socket.SOCK_STREAM)
+        return {"hostaddr": infos[0][4][0]} if infos else {}
+    except (OSError, psycopg.Error):
+        return {}
+
+
 def get_conn(retries: int = 3) -> psycopg.Connection:
     """Connect with a timeout, retrying with exponential backoff (Neon may be waking up)."""
     if not DATABASE_URL:
@@ -92,6 +111,7 @@ def get_conn(retries: int = 3) -> psycopg.Connection:
             return psycopg.connect(
                 DATABASE_URL, autocommit=True, connect_timeout=10,
                 keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
+                **_ipv4_hostaddr(DATABASE_URL),
             )
         except psycopg.OperationalError:
             if attempt == retries:
